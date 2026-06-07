@@ -1,0 +1,52 @@
+name: Download to CNB Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: CNB release tag and title
+        required: true
+        type: string
+      slug:
+        description: CNB repository slug, for example org/repo
+        required: true
+        type: string
+
+jobs:
+  download-and-upload:
+    runs-on: ubuntu-latest
+    environment: CNB
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2 curl jq
+
+      - name: Install CNB CLI
+        run: npm install -g @cnbcool/cnb-cli@1.9.5
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Download and upload to CNB release
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CNB_REPO_SLUG: ${{ inputs.slug }}
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          DOWNLOAD_LINK_FILE: download_link
+          CNB_ASSET_TTL_DAYS: "0"
+        run: .github/scripts/download-to-cnb-release.sh
