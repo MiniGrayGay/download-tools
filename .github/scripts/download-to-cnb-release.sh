@@ -247,7 +247,7 @@ NODE
 upload_asset() {
   local release_id="$1"
   local file="$2"
-  local asset_name size response status upload_url verify_url parsed upload_token asset_path
+  local asset_name size response status upload_url verify_url parsed upload_token asset_path upload_response
 
   asset_name="$(basename "$file")"
   size="$(wc -c <"$file" | tr -d '[:space:]')"
@@ -273,7 +273,28 @@ upload_asset() {
     exit 1
   fi
 
-  curl --fail --show-error --silent --location --request PUT --upload-file "$file" "$upload_url"
+  upload_response="$(mktemp "${TMP_DIR}/curl-upload-response.XXXXXX")"
+  if ! curl \
+    --fail-with-body \
+    --show-error \
+    --location \
+    --request PUT \
+    --upload-file "$file" \
+    --progress-bar \
+    --retry 3 \
+    --retry-delay 5 \
+    --retry-all-errors \
+    --output "$upload_response" \
+    "$upload_url"; then
+    echo "::error::Failed to upload $asset_name to CNB asset storage." >&2
+    if [[ -s "$upload_response" ]]; then
+      cat "$upload_response" >&2
+    fi
+    rm -f "$upload_response"
+    exit 1
+  fi
+  rm -f "$upload_response"
+  echo "Upload complete: $asset_name"
 
   parsed="$(parse_verify_url "$verify_url")"
   upload_token="$(jq -r '.uploadToken' <<<"$parsed")"
