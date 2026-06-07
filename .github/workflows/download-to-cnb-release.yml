@@ -11,6 +11,11 @@ on:
         description: CNB repository slug, for example org/repo
         required: true
         type: string
+      target_commitish:
+        description: CNB target branch or commit for release creation
+        required: false
+        default: main
+        type: string
 
 jobs:
   download-and-upload:
@@ -46,6 +51,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           CNB_REPO_SLUG: ${{ inputs.slug }}
+          CNB_TARGET_COMMITISH: ${{ inputs.target_commitish }}
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
           DOWNLOAD_LINK_FILE: download_link
           CNB_ASSET_TTL_DAYS: "0"

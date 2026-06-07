@@ -6,6 +6,7 @@ DOWNLOAD_DIR="${DOWNLOAD_DIR:-downloads}"
 TMP_DIR="${TMP_DIR:-.download-tmp}"
 RELEASE_TAG="${RELEASE_TAG:?RELEASE_TAG is required}"
 CNB_REPO_SLUG="${CNB_REPO_SLUG:?CNB_REPO_SLUG is required}"
+CNB_TARGET_COMMITISH="${CNB_TARGET_COMMITISH:-main}"
 CNB_ASSET_TTL_DAYS="${CNB_ASSET_TTL_DAYS:-0}"
 
 if [[ ! -f "$DOWNLOAD_LINK_FILE" ]]; then
@@ -42,6 +43,67 @@ if [[ "${#URLS[@]}" -eq 0 ]]; then
   echo "::error::No download URLs found in $DOWNLOAD_LINK_FILE" >&2
   exit 1
 fi
+
+cnb_status() {
+  jq -r '.status // empty' <<<"$1"
+}
+
+cnb_data_id() {
+  jq -r '.data.id // .id // empty' <<<"$1"
+}
+
+ensure_release() {
+  local response status release_id
+
+  echo "Checking CNB release: ${CNB_REPO_SLUG}@${RELEASE_TAG}" >&2
+  response="$(cnb releases get-release-by-tag --repo "$CNB_REPO_SLUG" --tag "$RELEASE_TAG" --verbose)"
+  status="$(cnb_status "$response")"
+
+  if [[ "$status" == "200" ]]; then
+    release_id="$(cnb_data_id "$response")"
+    if [[ -z "$release_id" ]]; then
+      echo "::error::CNB release exists but no id was returned." >&2
+      echo "$response" >&2
+      exit 1
+    fi
+
+    cnb releases patch-release \
+      --repo "$CNB_REPO_SLUG" \
+      --release-id "$release_id" \
+      --name "$RELEASE_TAG" \
+      --body "Downloaded by GitHub Actions from ${GITHUB_REPOSITORY:-unknown}." \
+      --make-latest true \
+      --verbose >/dev/null
+
+    printf '%s\n' "$release_id"
+    return
+  fi
+
+  echo "Creating CNB release: ${CNB_REPO_SLUG}@${RELEASE_TAG}" >&2
+  response="$(
+    cnb releases post-release \
+      --repo "$CNB_REPO_SLUG" \
+      --tag-name "$RELEASE_TAG" \
+      --target-commitish "$CNB_TARGET_COMMITISH" \
+      --name "$RELEASE_TAG" \
+      --body "Downloaded by GitHub Actions from ${GITHUB_REPOSITORY:-unknown}." \
+      --make-latest true \
+      --verbose
+  )"
+  status="$(cnb_status "$response")"
+  release_id="$(cnb_data_id "$response")"
+
+  if [[ "$status" != "201" && "$status" != "200" ]] || [[ -z "$release_id" ]]; then
+    echo "::error::Failed to create CNB release." >&2
+    echo "$response" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$release_id"
+}
+
+RELEASE_ID="$(ensure_release)"
+echo "CNB release id: $RELEASE_ID"
 
 rm -rf "$DOWNLOAD_DIR" "$TMP_DIR"
 mkdir -p "$DOWNLOAD_DIR" "$TMP_DIR"
@@ -157,63 +219,6 @@ if [[ "${#DOWNLOADED_FILES[@]}" -eq 0 ]]; then
   exit 1
 fi
 
-cnb_status() {
-  jq -r '.status // empty' <<<"$1"
-}
-
-cnb_data_id() {
-  jq -r '.data.id // .id // empty' <<<"$1"
-}
-
-ensure_release() {
-  local response status release_id
-
-  echo "Checking CNB release: ${CNB_REPO_SLUG}@${RELEASE_TAG}" >&2
-  response="$(cnb releases get-release-by-tag --repo "$CNB_REPO_SLUG" --tag "$RELEASE_TAG" --verbose)"
-  status="$(cnb_status "$response")"
-
-  if [[ "$status" == "200" ]]; then
-    release_id="$(cnb_data_id "$response")"
-    if [[ -z "$release_id" ]]; then
-      echo "::error::CNB release exists but no id was returned." >&2
-      echo "$response" >&2
-      exit 1
-    fi
-
-    cnb releases patch-release \
-      --repo "$CNB_REPO_SLUG" \
-      --release-id "$release_id" \
-      --name "$RELEASE_TAG" \
-      --body "Downloaded by GitHub Actions from ${GITHUB_REPOSITORY:-unknown}." \
-      --make-latest true \
-      --verbose >/dev/null
-
-    printf '%s\n' "$release_id"
-    return
-  fi
-
-  echo "Creating CNB release: ${CNB_REPO_SLUG}@${RELEASE_TAG}" >&2
-  response="$(
-    cnb releases post-release \
-      --repo "$CNB_REPO_SLUG" \
-      --tag-name "$RELEASE_TAG" \
-      --name "$RELEASE_TAG" \
-      --body "Downloaded by GitHub Actions from ${GITHUB_REPOSITORY:-unknown}." \
-      --make-latest true \
-      --verbose
-  )"
-  status="$(cnb_status "$response")"
-  release_id="$(cnb_data_id "$response")"
-
-  if [[ "$status" != "201" && "$status" != "200" ]] || [[ -z "$release_id" ]]; then
-    echo "::error::Failed to create CNB release." >&2
-    echo "$response" >&2
-    exit 1
-  fi
-
-  printf '%s\n' "$release_id"
-}
-
 parse_verify_url() {
   node - "$1" <<'NODE'
 const raw = process.argv[2];
@@ -291,9 +296,6 @@ upload_asset() {
     exit 1
   fi
 }
-
-RELEASE_ID="$(ensure_release)"
-echo "CNB release id: $RELEASE_ID"
 
 for file in "${DOWNLOADED_FILES[@]}"; do
   upload_asset "$RELEASE_ID" "$file"
